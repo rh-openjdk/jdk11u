@@ -48,6 +48,7 @@ import jdk.test.lib.util.FileUtils;
  * @modules jdk.crypto.cryptoki/sun.security.pkcs11:+open
  *          java.base/jdk.internal.misc
  * @library /java/security/testlibrary
+ *          /test/lib
  * @requires (jdk.version.major >= 8)
  * @run main/othervm/timeout=600 NssdbPin
  * @author Martin Balao (mbalao@redhat.com)
