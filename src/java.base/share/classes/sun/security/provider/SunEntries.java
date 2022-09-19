@@ -105,6 +105,9 @@ public final class SunEntries {
         // common attribute map
         HashMap<String, String> attrs = new HashMap<>(3);
 
+        String dsaOid = "1.2.840.10040.4.1";
+        List<String> dsaAliases = createAliasesWithOid(dsaOid, "1.3.14.3.2.12");
+
         if (!systemFipsEnabled) {
             /*
              * SecureRandom engines
@@ -179,26 +182,26 @@ public final class SunEntries {
             attrs.put("ImplementedIn", "Software");
             attrs.put("KeySize", "2048"); // for DSA KPG and APG only
 
-            String dsaOid = "1.2.840.10040.4.1";
-            List<String> dsaAliases = createAliasesWithOid(dsaOid, "1.3.14.3.2.12");
             String dsaKPGImplClass = "sun.security.provider.DSAKeyPairGenerator$";
             dsaKPGImplClass += (useLegacyDSA? "Legacy" : "Current");
             add(p, "KeyPairGenerator", "DSA", dsaKPGImplClass, dsaAliases, attrs);
+        }
 
-            /*
-             * Algorithm Parameter Generator engines
-             */
-            add(p, "AlgorithmParameterGenerator", "DSA",
-                    "sun.security.provider.DSAParameterGenerator", dsaAliases,
-                    attrs);
-            attrs.remove("KeySize");
+        /*
+         * Algorithm Parameter Generator engines
+         */
+        add(p, "AlgorithmParameterGenerator", "DSA",
+                "sun.security.provider.DSAParameterGenerator", dsaAliases,
+                attrs);
+        attrs.remove("KeySize");
 
-            /*
-             * Algorithm Parameter engines
-             */
-            add(p, "AlgorithmParameters", "DSA",
-                    "sun.security.provider.DSAParameters", dsaAliases, attrs);
+        /*
+         * Algorithm Parameter engines
+         */
+        add(p, "AlgorithmParameters", "DSA",
+                "sun.security.provider.DSAParameters", dsaAliases, attrs);
 
+        if (!systemFipsEnabled) {
             /*
              * Key factories
              */
