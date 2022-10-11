@@ -37,7 +37,7 @@ import javax.crypto.*;
 import javax.crypto.interfaces.*;
 import javax.crypto.spec.*;
 
-import jdk.internal.access.SharedSecrets;
+import jdk.internal.misc.SharedSecrets;
 
 import sun.security.rsa.RSAUtil.KeyType;
 import sun.security.rsa.RSAPublicKeyImpl;

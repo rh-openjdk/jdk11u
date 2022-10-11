@@ -160,7 +160,7 @@ public class PKCS11 {
            String functionList, CK_C_INITIALIZE_ARGS pInitArgs,
            boolean omitInitialize) throws IOException, PKCS11Exception {
         return getInstance(pkcs11ModulePath, functionList,
-                           pInitArgs, omitInitialize, null);
+                           pInitArgs, omitInitialize, null, null);
     }
 
     public static synchronized PKCS11 getInstance(String pkcs11ModulePath,
