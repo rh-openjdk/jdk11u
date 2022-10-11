@@ -318,8 +318,7 @@ final class FIPSKeyImporter {
                     CKA_PRIVATE_EXPONENT, CKA_PRIME_1, CKA_PRIME_2,
                     CKA_EXPONENT_1, CKA_EXPONENT_2, CKA_COEFFICIENT);
             RSAPrivateKey rsaPKey = RSAPrivateCrtKeyImpl.newKey(
-                    RSAUtil.KeyType.RSA, "PKCS#8", plainExportedKey
-            );
+                    plainExportedKey);
             CK_ATTRIBUTE attr;
             if ((attr = sensitiveAttrs.get(CKA_PRIVATE_EXPONENT)) != null) {
                 attr.pValue = rsaPKey.getPrivateExponent().toByteArray();
