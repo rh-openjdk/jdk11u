@@ -174,14 +174,16 @@ public final class SunEntries {
             add(p, "Signature", "SHA256withDSAinP1363Format",
                     "sun.security.provider.DSA$SHA256withDSAinP1363Format",
                     null, null);
+        }
 
-            /*
-             *  Key Pair Generator engines
-             */
-            attrs.clear();
-            attrs.put("ImplementedIn", "Software");
-            attrs.put("KeySize", "2048"); // for DSA KPG and APG only
+        /*
+         *  Key Pair Generator engines
+         */
+        attrs.clear();
+        attrs.put("ImplementedIn", "Software");
+        attrs.put("KeySize", "2048"); // for DSA KPG and APG only
 
+        if (!systemFipsEnabled) {
             String dsaKPGImplClass = "sun.security.provider.DSAKeyPairGenerator$";
             dsaKPGImplClass += (useLegacyDSA? "Legacy" : "Current");
             add(p, "KeyPairGenerator", "DSA", dsaKPGImplClass, dsaAliases, attrs);
