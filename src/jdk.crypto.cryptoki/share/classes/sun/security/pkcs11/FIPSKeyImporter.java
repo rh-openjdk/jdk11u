@@ -45,6 +45,7 @@ import sun.security.pkcs11.TemplateManager;
 import sun.security.pkcs11.wrapper.CK_ATTRIBUTE;
 import sun.security.pkcs11.wrapper.CK_MECHANISM;
 import static sun.security.pkcs11.wrapper.PKCS11Constants.*;
+import static sun.security.pkcs11.wrapper.PKCS11Exception.*;
 import sun.security.pkcs11.wrapper.PKCS11Exception;
 import sun.security.rsa.RSAPrivateCrtKeyImpl;
 import sun.security.rsa.RSAUtil;
@@ -70,9 +71,6 @@ final class FIPSKeyImporter {
 
     private static volatile Provider sunECProvider = null;
     private static final ReentrantLock sunECProviderLock = new ReentrantLock();
-
-    private static volatile KeyFactory DHKF = null;
-    private static final ReentrantLock DHKFLock = new ReentrantLock();
 
     static Long importKey(SunPKCS11 sunPKCS11, long hSession, CK_ATTRIBUTE[] attributes)
             throws PKCS11Exception {
