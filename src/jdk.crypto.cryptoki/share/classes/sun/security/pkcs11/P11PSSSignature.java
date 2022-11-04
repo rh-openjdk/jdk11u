@@ -39,7 +39,7 @@ import java.security.spec.PSSParameterSpec;
 import java.security.interfaces.*;
 import sun.security.pkcs11.wrapper.*;
 import static sun.security.pkcs11.wrapper.PKCS11Constants.*;
-
+import static sun.security.pkcs11.wrapper.PKCS11Exception.*;
 
 /**
  * RSASSA-PSS Signature implementation class. This class currently supports the

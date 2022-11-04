@@ -28,6 +28,7 @@ package sun.security.ec;
 import java.util.*;
 import java.security.*;
 import java.util.regex.Pattern;
+import jdk.internal.misc.SharedSecrets;
 import sun.security.util.CurveDB;
 import sun.security.util.NamedCurve;
 
@@ -52,6 +53,10 @@ import static sun.security.util.SecurityConstants.PROVIDER_VER;
 public final class SunEC extends Provider {
 
     private static final long serialVersionUID = -2279741672933606418L;
+
+    private static final boolean systemFipsEnabled =
+            SharedSecrets.getJavaSecuritySystemConfiguratorAccess()
+            .isSystemFipsEnabled();
 
     // flag indicating whether the full EC implementation is present
     // (when native library is absent then fewer EC algorithms are available)
@@ -233,64 +238,66 @@ public final class SunEC extends Provider {
             return;
         }
 
-        /*
-         * Signature engines
-         */
-        putService(new ProviderService(this, "Signature",
-            "NONEwithECDSA", "sun.security.ec.ECDSASignature$Raw",
-            null, ATTRS));
-        putService(new ProviderService(this, "Signature",
-            "SHA1withECDSA", "sun.security.ec.ECDSASignature$SHA1",
-            new String[] { "1.2.840.10045.4.1", "OID.1.2.840.10045.4.1" },
-            ATTRS));
-        putService(new ProviderService(this, "Signature",
-            "SHA224withECDSA", "sun.security.ec.ECDSASignature$SHA224",
-            new String[] { "1.2.840.10045.4.3.1", "OID.1.2.840.10045.4.3.1"},
-            ATTRS));
-        putService(new ProviderService(this, "Signature",
-            "SHA256withECDSA", "sun.security.ec.ECDSASignature$SHA256",
-            new String[] { "1.2.840.10045.4.3.2", "OID.1.2.840.10045.4.3.2"},
-            ATTRS));
-        putService(new ProviderService(this, "Signature",
-            "SHA384withECDSA", "sun.security.ec.ECDSASignature$SHA384",
-            new String[] { "1.2.840.10045.4.3.3", "OID.1.2.840.10045.4.3.3" },
-            ATTRS));
-        putService(new ProviderService(this, "Signature",
-            "SHA512withECDSA", "sun.security.ec.ECDSASignature$SHA512",
-            new String[] { "1.2.840.10045.4.3.4", "OID.1.2.840.10045.4.3.4" },
-            ATTRS));
+        if (!systemFipsEnabled) {
+            /*
+             * Signature engines
+             */
+            putService(new ProviderService(this, "Signature",
+                "NONEwithECDSA", "sun.security.ec.ECDSASignature$Raw",
+                null, ATTRS));
+            putService(new ProviderService(this, "Signature",
+                "SHA1withECDSA", "sun.security.ec.ECDSASignature$SHA1",
+                new String[] { "1.2.840.10045.4.1", "OID.1.2.840.10045.4.1" },
+                ATTRS));
+            putService(new ProviderService(this, "Signature",
+                "SHA224withECDSA", "sun.security.ec.ECDSASignature$SHA224",
+                new String[] { "1.2.840.10045.4.3.1", "OID.1.2.840.10045.4.3.1"},
+                ATTRS));
+            putService(new ProviderService(this, "Signature",
+                "SHA256withECDSA", "sun.security.ec.ECDSASignature$SHA256",
+                new String[] { "1.2.840.10045.4.3.2", "OID.1.2.840.10045.4.3.2"},
+                ATTRS));
+            putService(new ProviderService(this, "Signature",
+                "SHA384withECDSA", "sun.security.ec.ECDSASignature$SHA384",
+                new String[] { "1.2.840.10045.4.3.3", "OID.1.2.840.10045.4.3.3" },
+                ATTRS));
+            putService(new ProviderService(this, "Signature",
+                "SHA512withECDSA", "sun.security.ec.ECDSASignature$SHA512",
+                new String[] { "1.2.840.10045.4.3.4", "OID.1.2.840.10045.4.3.4" },
+                ATTRS));
 
-        putService(new ProviderService(this, "Signature",
-             "NONEwithECDSAinP1363Format",
-             "sun.security.ec.ECDSASignature$RawinP1363Format"));
-        putService(new ProviderService(this, "Signature",
-             "SHA1withECDSAinP1363Format",
-             "sun.security.ec.ECDSASignature$SHA1inP1363Format"));
-        putService(new ProviderService(this, "Signature",
-             "SHA224withECDSAinP1363Format",
-             "sun.security.ec.ECDSASignature$SHA224inP1363Format"));
-        putService(new ProviderService(this, "Signature",
-             "SHA256withECDSAinP1363Format",
-             "sun.security.ec.ECDSASignature$SHA256inP1363Format"));
-        putService(new ProviderService(this, "Signature",
-            "SHA384withECDSAinP1363Format",
-            "sun.security.ec.ECDSASignature$SHA384inP1363Format"));
-        putService(new ProviderService(this, "Signature",
-            "SHA512withECDSAinP1363Format",
-            "sun.security.ec.ECDSASignature$SHA512inP1363Format"));
+            putService(new ProviderService(this, "Signature",
+                 "NONEwithECDSAinP1363Format",
+                 "sun.security.ec.ECDSASignature$RawinP1363Format"));
+            putService(new ProviderService(this, "Signature",
+                 "SHA1withECDSAinP1363Format",
+                 "sun.security.ec.ECDSASignature$SHA1inP1363Format"));
+            putService(new ProviderService(this, "Signature",
+                 "SHA224withECDSAinP1363Format",
+                 "sun.security.ec.ECDSASignature$SHA224inP1363Format"));
+            putService(new ProviderService(this, "Signature",
+                 "SHA256withECDSAinP1363Format",
+                 "sun.security.ec.ECDSASignature$SHA256inP1363Format"));
+            putService(new ProviderService(this, "Signature",
+                "SHA384withECDSAinP1363Format",
+                "sun.security.ec.ECDSASignature$SHA384inP1363Format"));
+            putService(new ProviderService(this, "Signature",
+                "SHA512withECDSAinP1363Format",
+                "sun.security.ec.ECDSASignature$SHA512inP1363Format"));
 
-        /*
-         *  Key Pair Generator engine
-         */
-        putService(new ProviderService(this, "KeyPairGenerator",
-            "EC", "sun.security.ec.ECKeyPairGenerator",
-            new String[] { "EllipticCurve" }, ATTRS));
+            /*
+             *  Key Pair Generator engine
+             */
+            putService(new ProviderService(this, "KeyPairGenerator",
+                "EC", "sun.security.ec.ECKeyPairGenerator",
+                new String[] { "EllipticCurve" }, ATTRS));
 
-        /*
-         * Key Agreement engine
-         */
-        putService(new ProviderService(this, "KeyAgreement",
-            "ECDH", "sun.security.ec.ECDHKeyAgreement", null, ATTRS));
+            /*
+             * Key Agreement engine
+             */
+            putService(new ProviderService(this, "KeyAgreement",
+                "ECDH", "sun.security.ec.ECDHKeyAgreement", null, ATTRS));
+        }
     }
 
     private void putXDHEntries() {
@@ -308,23 +315,24 @@ public final class SunEC extends Provider {
             "X448", "sun.security.ec.XDHKeyFactory.X448",
             new String[]{"1.3.101.111", "OID.1.3.101.111"}, ATTRS));
 
-        putService(new ProviderService(this, "KeyPairGenerator",
-            "XDH", "sun.security.ec.XDHKeyPairGenerator", null, ATTRS));
-        putService(new ProviderService(this, "KeyPairGenerator",
-            "X25519", "sun.security.ec.XDHKeyPairGenerator.X25519",
-            new String[]{"1.3.101.110", "OID.1.3.101.110"}, ATTRS));
-        putService(new ProviderService(this, "KeyPairGenerator",
-            "X448", "sun.security.ec.XDHKeyPairGenerator.X448",
-            new String[]{"1.3.101.111", "OID.1.3.101.111"}, ATTRS));
+        if (!systemFipsEnabled) {
+            putService(new ProviderService(this, "KeyPairGenerator",
+                "XDH", "sun.security.ec.XDHKeyPairGenerator", null, ATTRS));
+            putService(new ProviderService(this, "KeyPairGenerator",
+                "X25519", "sun.security.ec.XDHKeyPairGenerator.X25519",
+                new String[]{"1.3.101.110", "OID.1.3.101.110"}, ATTRS));
+            putService(new ProviderService(this, "KeyPairGenerator",
+                "X448", "sun.security.ec.XDHKeyPairGenerator.X448",
+                new String[]{"1.3.101.111", "OID.1.3.101.111"}, ATTRS));
 
-        putService(new ProviderService(this, "KeyAgreement",
-            "XDH", "sun.security.ec.XDHKeyAgreement", null, ATTRS));
-        putService(new ProviderService(this, "KeyAgreement",
-            "X25519", "sun.security.ec.XDHKeyAgreement.X25519",
-            new String[]{"1.3.101.110", "OID.1.3.101.110"}, ATTRS));
-        putService(new ProviderService(this, "KeyAgreement",
-            "X448", "sun.security.ec.XDHKeyAgreement.X448",
-            new String[]{"1.3.101.111", "OID.1.3.101.111"}, ATTRS));
-
+            putService(new ProviderService(this, "KeyAgreement",
+                "XDH", "sun.security.ec.XDHKeyAgreement", null, ATTRS));
+            putService(new ProviderService(this, "KeyAgreement",
+                "X25519", "sun.security.ec.XDHKeyAgreement.X25519",
+                new String[]{"1.3.101.110", "OID.1.3.101.110"}, ATTRS));
+            putService(new ProviderService(this, "KeyAgreement",
+                "X448", "sun.security.ec.XDHKeyAgreement.X448",
+                new String[]{"1.3.101.111", "OID.1.3.101.111"}, ATTRS));
+        }
     }
 }
