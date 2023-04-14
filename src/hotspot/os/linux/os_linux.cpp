@@ -1,5 +1,6 @@
 /*
- * Copyright (c) 1999, 2019, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1999, 2022, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2015, 2022 SAP SE. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -101,7 +102,6 @@
 # include <string.h>
 # include <syscall.h>
 # include <sys/sysinfo.h>
-# include <gnu/libc-version.h>
 # include <sys/ipc.h>
 # include <sys/shm.h>
 # include <link.h>
@@ -133,6 +133,17 @@
 // for timer info max values which include all bits
 #define ALL_64_BITS CONST64(0xFFFFFFFFFFFFFFFF)
 
+#ifdef MUSL_LIBC
+// dlvsym is not a part of POSIX
+// and musl libc doesn't implement it.
+static void *dlvsym(void *handle,
+                    const char *symbol,
+                    const char *version) {
+   // load the latest version of symbol
+   return dlsym(handle, symbol);
+}
+#endif
+
 enum CoredumpFilterBit {
   FILE_BACKED_PVT_BIT = 1 << 2,
   FILE_BACKED_SHARED_BIT = 1 << 3,
@@ -155,7 +166,7 @@ pthread_t os::Linux::_main_thread;
 int os::Linux::_page_size = -1;
 bool os::Linux::_supports_fast_thread_cpu_time = false;
 uint32_t os::Linux::_os_version = 0;
-const char * os::Linux::_glibc_version = NULL;
+const char * os::Linux::_libc_version = NULL;
 const char * os::Linux::_libpthread_version = NULL;
 
 #ifdef __GLIBC__
@@ -198,15 +209,12 @@ julong os::Linux::available_memory() {
   julong avail_mem;
 
   if (OSContainer::is_containerized()) {
-    jlong mem_limit, mem_usage;
-    if ((mem_limit = OSContainer::memory_limit_in_bytes()) < 1) {
-      log_debug(os, container)("container memory limit %s: " JLONG_FORMAT ", using host value",
-                             mem_limit == OSCONTAINER_ERROR ? "failed" : "unlimited", mem_limit);
-    }
+    jlong mem_limit = OSContainer::memory_limit_in_bytes();
+    jlong mem_usage;
     if (mem_limit > 0 && (mem_usage = OSContainer::memory_usage_in_bytes()) < 1) {
       log_debug(os, container)("container memory usage failed: " JLONG_FORMAT ", using host value", mem_usage);
     }
-    if (mem_limit > 0 && mem_usage > 0 ) {
+    if (mem_limit > 0 && mem_usage > 0) {
       avail_mem = mem_limit > mem_usage ? (julong)mem_limit - (julong)mem_usage : 0;
       log_trace(os)("available container memory: " JULONG_FORMAT, avail_mem);
       return avail_mem;
@@ -227,8 +235,6 @@ julong os::physical_memory() {
       log_trace(os)("total container memory: " JLONG_FORMAT, mem_limit);
       return mem_limit;
     }
-    log_debug(os, container)("container memory limit %s: " JLONG_FORMAT ", using host value",
-                            mem_limit == OSCONTAINER_ERROR ? "failed" : "unlimited", mem_limit);
   }
 
   phys_mem = Linux::physical_memory();
@@ -355,6 +361,14 @@ pid_t os::Linux::gettid() {
   int rslt = syscall(SYS_gettid);
   assert(rslt != -1, "must be."); // old linuxthreads implementation?
   return (pid_t)rslt;
+}
+
+// Returns the amount of swap currently configured, in bytes.
+// This can change at any time.
+julong os::Linux::host_swap() {
+  struct sysinfo si;
+  sysinfo(&si);
+  return (julong)si.totalswap;
 }
 
 // Most versions of linux have a bug where the number of processors are
@@ -615,17 +629,24 @@ void os::Linux::libpthread_init() {
   #error "glibc too old (< 2.3.2)"
 #endif
 
+#ifdef MUSL_LIBC
+  // confstr() from musl libc returns EINVAL for
+  // _CS_GNU_LIBC_VERSION and _CS_GNU_LIBPTHREAD_VERSION
+  os::Linux::set_libc_version("musl - unknown");
+  os::Linux::set_libpthread_version("musl - unknown");
+#else
   size_t n = confstr(_CS_GNU_LIBC_VERSION, NULL, 0);
   assert(n > 0, "cannot retrieve glibc version");
   char *str = (char *)malloc(n, mtInternal);
   confstr(_CS_GNU_LIBC_VERSION, str, n);
-  os::Linux::set_glibc_version(str);
+  os::Linux::set_libc_version(str);
 
   n = confstr(_CS_GNU_LIBPTHREAD_VERSION, NULL, 0);
   assert(n > 0, "cannot retrieve pthread version");
   str = (char *)malloc(n, mtInternal);
   confstr(_CS_GNU_LIBPTHREAD_VERSION, str, n);
   os::Linux::set_libpthread_version(str);
+#endif
 }
 
 /////////////////////////////////////////////////////////////////////////////
@@ -750,14 +771,20 @@ static void *thread_native_entry(Thread *thread) {
 
   thread->record_stack_base_and_size();
 
+#ifndef __GLIBC__
   // Try to randomize the cache line index of hot stack frames.
   // This helps when threads of the same stack traces evict each other's
   // cache lines. The threads can be either from the same JVM instance, or
   // from different JVM instances. The benefit is especially true for
   // processors with hyperthreading technology.
+  // This code is not needed anymore in glibc because it has MULTI_PAGE_ALIASING
+  // and we did not see any degradation in performance without `alloca()`.
   static int counter = 0;
   int pid = os::current_process_id();
-  alloca(((pid ^ counter++) & 7) * 128);
+  void *stackmem = alloca(((pid ^ counter++) & 7) * 128);
+  // Ensure the alloca result is used in a way that prevents the compiler from eliding it.
+  *(char *)stackmem = 1;
+#endif
 
   thread->initialize_thread_current();
 
@@ -855,16 +882,21 @@ bool os::create_thread(Thread* thread, ThreadType thr_type,
   ThreadState state;
 
   {
+    ResourceMark rm;
     pthread_t tid;
-    int ret = pthread_create(&tid, &attr, (void* (*)(void*)) thread_native_entry, thread);
+    int ret = 0;
+    int limit = 3;
+    do {
+      ret = pthread_create(&tid, &attr, (void* (*)(void*)) thread_native_entry, thread);
+    } while (ret == EAGAIN && limit-- > 0);
 
     char buf[64];
     if (ret == 0) {
-      log_info(os, thread)("Thread started (pthread id: " UINTX_FORMAT ", attributes: %s). ",
-        (uintx) tid, os::Posix::describe_pthread_attr(buf, sizeof(buf), &attr));
+      log_info(os, thread)("Thread \"%s\" started (pthread id: " UINTX_FORMAT ", attributes: %s). ",
+                           thread->name(), (uintx) tid, os::Posix::describe_pthread_attr(buf, sizeof(buf), &attr));
     } else {
-      log_warning(os, thread)("Failed to start thread - pthread_create failed (%s) for attributes: %s.",
-        os::errno_name(ret), os::Posix::describe_pthread_attr(buf, sizeof(buf), &attr));
+      log_warning(os, thread)("Failed to start thread \"%s\" - pthread_create failed (%s) for attributes: %s.",
+                              thread->name(), os::errno_name(ret), os::Posix::describe_pthread_attr(buf, sizeof(buf), &attr));
       // Log some OS information which might explain why creating the thread failed.
       log_info(os, thread)("Number of threads approx. running in the VM: %d", Threads::number_of_threads());
       LogStream st(Log(os, thread)::info());
@@ -2277,7 +2309,7 @@ void os::get_summary_os_info(char* buf, size_t buflen) {
 void os::Linux::print_libversion_info(outputStream* st) {
   // libc, pthread
   st->print("libc:");
-  st->print("%s ", os::Linux::glibc_version());
+  st->print("%s ", os::Linux::libc_version());
   st->print("%s ", os::Linux::libpthread_version());
   st->cr();
 }
@@ -2304,73 +2336,115 @@ void os::Linux::print_system_memory_info(outputStream* st) {
                       "/sys/kernel/mm/transparent_hugepage/defrag", st);
 }
 
-void os::Linux::print_process_memory_info(outputStream* st) {
-
-  st->print_cr("Process Memory:");
-
-  // Print virtual and resident set size; peak values; swap; and for
-  //  rss its components if the kernel is recent enough.
-  ssize_t vmsize = -1, vmpeak = -1, vmswap = -1,
-      vmrss = -1, vmhwm = -1, rssanon = -1, rssfile = -1, rssshmem = -1;
-  const int num_values = 8;
+bool os::Linux::query_process_memory_info(os::Linux::meminfo_t* info) {
+  FILE* f = os::fopen("/proc/self/status", "r");
+  const int num_values = sizeof(os::Linux::meminfo_t) / sizeof(size_t);
   int num_found = 0;
-  FILE* f = ::fopen("/proc/self/status", "r");
   char buf[256];
+  info->vmsize = info->vmpeak = info->vmrss = info->vmhwm = info->vmswap =
+      info->rssanon = info->rssfile = info->rssshmem = -1;
   if (f != NULL) {
     while (::fgets(buf, sizeof(buf), f) != NULL && num_found < num_values) {
-      if ( (vmsize == -1    && sscanf(buf, "VmSize: " SSIZE_FORMAT " kB", &vmsize) == 1) ||
-           (vmpeak == -1    && sscanf(buf, "VmPeak: " SSIZE_FORMAT " kB", &vmpeak) == 1) ||
-           (vmswap == -1    && sscanf(buf, "VmSwap: " SSIZE_FORMAT " kB", &vmswap) == 1) ||
-           (vmhwm == -1     && sscanf(buf, "VmHWM: " SSIZE_FORMAT " kB", &vmhwm) == 1) ||
-           (vmrss == -1     && sscanf(buf, "VmRSS: " SSIZE_FORMAT " kB", &vmrss) == 1) ||
-           (rssanon == -1   && sscanf(buf, "RssAnon: " SSIZE_FORMAT " kB", &rssanon) == 1) ||
-           (rssfile == -1   && sscanf(buf, "RssFile: " SSIZE_FORMAT " kB", &rssfile) == 1) ||
-           (rssshmem == -1  && sscanf(buf, "RssShmem: " SSIZE_FORMAT " kB", &rssshmem) == 1)
+      if ( (info->vmsize == -1    && sscanf(buf, "VmSize: " SSIZE_FORMAT " kB", &info->vmsize) == 1) ||
+           (info->vmpeak == -1    && sscanf(buf, "VmPeak: " SSIZE_FORMAT " kB", &info->vmpeak) == 1) ||
+           (info->vmswap == -1    && sscanf(buf, "VmSwap: " SSIZE_FORMAT " kB", &info->vmswap) == 1) ||
+           (info->vmhwm == -1     && sscanf(buf, "VmHWM: " SSIZE_FORMAT " kB", &info->vmhwm) == 1) ||
+           (info->vmrss == -1     && sscanf(buf, "VmRSS: " SSIZE_FORMAT " kB", &info->vmrss) == 1) ||
+           (info->rssanon == -1   && sscanf(buf, "RssAnon: " SSIZE_FORMAT " kB", &info->rssanon) == 1) || // Needs Linux 4.5
+           (info->rssfile == -1   && sscanf(buf, "RssFile: " SSIZE_FORMAT " kB", &info->rssfile) == 1) || // Needs Linux 4.5
+           (info->rssshmem == -1  && sscanf(buf, "RssShmem: " SSIZE_FORMAT " kB", &info->rssshmem) == 1)  // Needs Linux 4.5
            )
       {
         num_found ++;
       }
     }
     fclose(f);
+    return true;
+  }
+  return false;
+}
 
-    st->print_cr("Virtual Size: " SSIZE_FORMAT "K (peak: " SSIZE_FORMAT "K)", vmsize, vmpeak);
-    st->print("Resident Set Size: " SSIZE_FORMAT "K (peak: " SSIZE_FORMAT "K)", vmrss, vmhwm);
-    if (rssanon != -1) { // requires kernel >= 4.5
+#ifdef __GLIBC__
+// For Glibc, print a one-liner with the malloc tunables.
+// Most important and popular is MALLOC_ARENA_MAX, but we are
+// thorough and print them all.
+static void print_glibc_malloc_tunables(outputStream* st) {
+  static const char* var[] = {
+      // the new variant
+      "GLIBC_TUNABLES",
+      // legacy variants
+      "MALLOC_CHECK_", "MALLOC_TOP_PAD_", "MALLOC_PERTURB_",
+      "MALLOC_MMAP_THRESHOLD_", "MALLOC_TRIM_THRESHOLD_",
+      "MALLOC_MMAP_MAX_", "MALLOC_ARENA_TEST", "MALLOC_ARENA_MAX",
+      NULL};
+  st->print("glibc malloc tunables: ");
+  bool printed = false;
+  for (int i = 0; var[i] != NULL; i ++) {
+    const char* const val = ::getenv(var[i]);
+    if (val != NULL) {
+      st->print("%s%s=%s", (printed ? ", " : ""), var[i], val);
+      printed = true;
+    }
+  }
+  if (!printed) {
+    st->print("(default)");
+  }
+}
+#endif // __GLIBC__
+
+void os::Linux::print_process_memory_info(outputStream* st) {
+
+  st->print_cr("Process Memory:");
+
+  // Print virtual and resident set size; peak values; swap; and for
+  //  rss its components if the kernel is recent enough.
+  meminfo_t info;
+  if (query_process_memory_info(&info)) {
+    st->print_cr("Virtual Size: " SSIZE_FORMAT "K (peak: " SSIZE_FORMAT "K)", info.vmsize, info.vmpeak);
+    st->print("Resident Set Size: " SSIZE_FORMAT "K (peak: " SSIZE_FORMAT "K)", info.vmrss, info.vmhwm);
+    if (info.rssanon != -1) { // requires kernel >= 4.5
       st->print(" (anon: " SSIZE_FORMAT "K, file: " SSIZE_FORMAT "K, shmem: " SSIZE_FORMAT "K)",
-                  rssanon, rssfile, rssshmem);
+                info.rssanon, info.rssfile, info.rssshmem);
     }
     st->cr();
-    if (vmswap != -1) { // requires kernel >= 2.6.34
-      st->print_cr("Swapped out: " SSIZE_FORMAT "K", vmswap);
+    if (info.vmswap != -1) { // requires kernel >= 2.6.34
+      st->print_cr("Swapped out: " SSIZE_FORMAT "K", info.vmswap);
     }
   } else {
     st->print_cr("Could not open /proc/self/status to get process memory related information");
   }
 
-  // Print glibc outstanding allocations.
-  // (note: there is no implementation of mallinfo for muslc)
+  // glibc only:
+  // - Print outstanding allocations using mallinfo
+  // - Print glibc tunables
 #ifdef __GLIBC__
   size_t total_allocated = 0;
+  size_t free_retained = 0;
   bool might_have_wrapped = false;
   if (_mallinfo2 != NULL) {
     struct glibc_mallinfo2 mi = _mallinfo2();
-    total_allocated = mi.uordblks;
+    total_allocated = mi.uordblks + mi.hblkhd;
+    free_retained = mi.fordblks;
   } else if (_mallinfo != NULL) {
-    // mallinfo is an old API. Member names mean next to nothing and, beyond that, are int.
-    // So values may have wrapped around. Still useful enough to see how much glibc thinks
-    // we allocated.
+    // mallinfo is an old API. Member names mean next to nothing and, beyond that, are 32-bit signed.
+    // So for larger footprints the values may have wrapped around. We try to detect this here: if the
+    // process whole resident set size is smaller than 4G, malloc footprint has to be less than that
+    // and the numbers are reliable.
     struct glibc_mallinfo mi = _mallinfo();
-    total_allocated = (size_t)(unsigned)mi.uordblks;
+    total_allocated = (size_t)(unsigned)mi.uordblks + (size_t)(unsigned)mi.hblkhd;
+    free_retained = (size_t)(unsigned)mi.fordblks;
     // Since mallinfo members are int, glibc values may have wrapped. Warn about this.
-    might_have_wrapped = (vmrss * K) > UINT_MAX && (vmrss * K) > (total_allocated + UINT_MAX);
+    might_have_wrapped = (info.vmrss * K) > UINT_MAX && (info.vmrss * K) > (total_allocated + UINT_MAX);
   }
   if (_mallinfo2 != NULL || _mallinfo != NULL) {
-    st->print_cr("C-Heap outstanding allocations: " SIZE_FORMAT "K%s",
-                 total_allocated / K,
+    st->print_cr("C-Heap outstanding allocations: " SIZE_FORMAT "K, retained: " SIZE_FORMAT "K%s",
+                 total_allocated / K, free_retained / K,
                  might_have_wrapped ? " (may have wrapped)" : "");
   }
-#endif // __GLIBC__
-
+  // Tunables
+  print_glibc_malloc_tunables(st);
+  st->cr();
+#endif
 }
 
 void os::Linux::print_ld_preload_file(outputStream* st) {
@@ -2386,55 +2460,87 @@ void os::Linux::print_uptime_info(outputStream* st) {
   }
 }
 
-
 void os::Linux::print_container_info(outputStream* st) {
   if (!OSContainer::is_containerized()) {
+    st->print_cr("container information not found.");
     return;
   }
 
   st->print("container (cgroup) information:\n");
 
   const char *p_ct = OSContainer::container_type();
-  st->print("container_type: %s\n", p_ct != NULL ? p_ct : "failed");
+  st->print("container_type: %s\n", p_ct != NULL ? p_ct : "not supported");
 
   char *p = OSContainer::cpu_cpuset_cpus();
-  st->print("cpu_cpuset_cpus: %s\n", p != NULL ? p : "failed");
+  st->print("cpu_cpuset_cpus: %s\n", p != NULL ? p : "not supported");
   free(p);
 
   p = OSContainer::cpu_cpuset_memory_nodes();
-  st->print("cpu_memory_nodes: %s\n", p != NULL ? p : "failed");
+  st->print("cpu_memory_nodes: %s\n", p != NULL ? p : "not supported");
   free(p);
 
   int i = OSContainer::active_processor_count();
+  st->print("active_processor_count: ");
   if (i > 0) {
-    st->print("active_processor_count: %d\n", i);
+    if (ActiveProcessorCount > 0) {
+      st->print_cr("%d, but overridden by -XX:ActiveProcessorCount %d", i, ActiveProcessorCount);
+    } else {
+      st->print_cr("%d", i);
+    }
   } else {
-    st->print("active_processor_count: failed\n");
+    st->print("not supported\n");
   }
 
   i = OSContainer::cpu_quota();
-  st->print("cpu_quota: %d\n", i);
+  st->print("cpu_quota: ");
+  if (i > 0) {
+    st->print("%d\n", i);
+  } else {
+    st->print("%s\n", i == OSCONTAINER_ERROR ? "not supported" : "no quota");
+  }
 
   i = OSContainer::cpu_period();
-  st->print("cpu_period: %d\n", i);
+  st->print("cpu_period: ");
+  if (i > 0) {
+    st->print("%d\n", i);
+  } else {
+    st->print("%s\n", i == OSCONTAINER_ERROR ? "not supported" : "no period");
+  }
 
   i = OSContainer::cpu_shares();
-  st->print("cpu_shares: %d\n", i);
+  st->print("cpu_shares: ");
+  if (i > 0) {
+    st->print("%d\n", i);
+  } else {
+    st->print("%s\n", i == OSCONTAINER_ERROR ? "not supported" : "no shares");
+  }
 
-  jlong j = OSContainer::memory_limit_in_bytes();
-  st->print("memory_limit_in_bytes: " JLONG_FORMAT "\n", j);
+  OSContainer::print_container_helper(st, OSContainer::memory_limit_in_bytes(), "memory_limit_in_bytes");
+  OSContainer::print_container_helper(st, OSContainer::memory_and_swap_limit_in_bytes(), "memory_and_swap_limit_in_bytes");
+  OSContainer::print_container_helper(st, OSContainer::memory_soft_limit_in_bytes(), "memory_soft_limit_in_bytes");
+  OSContainer::print_container_helper(st, OSContainer::memory_usage_in_bytes(), "memory_usage_in_bytes");
+  OSContainer::print_container_helper(st, OSContainer::memory_max_usage_in_bytes(), "memory_max_usage_in_bytes");
 
-  j = OSContainer::memory_and_swap_limit_in_bytes();
-  st->print("memory_and_swap_limit_in_bytes: " JLONG_FORMAT "\n", j);
+  OSContainer::print_version_specific_info(st);
 
-  j = OSContainer::memory_soft_limit_in_bytes();
-  st->print("memory_soft_limit_in_bytes: " JLONG_FORMAT "\n", j);
+  jlong j = OSContainer::pids_max();
+  st->print("maximum number of tasks: ");
+  if (j > 0) {
+    st->print_cr(JLONG_FORMAT, j);
+  } else {
+    st->print_cr("%s", j == OSCONTAINER_ERROR ? "not supported" : "unlimited");
+  }
 
-  j = OSContainer::OSContainer::memory_usage_in_bytes();
-  st->print("memory_usage_in_bytes: " JLONG_FORMAT "\n", j);
+  j = OSContainer::pids_current();
+  st->print("current number of tasks: ");
+  if (j > 0) {
+    st->print_cr(JLONG_FORMAT, j);
+  } else {
+    if (j == OSCONTAINER_ERROR) {
+      st->print_cr("not supported");
+    }
+  }
 
-  j = OSContainer::OSContainer::memory_max_usage_in_bytes();
-  st->print("memory_max_usage_in_bytes: " JLONG_FORMAT "\n", j);
   st->cr();
 }
 
@@ -3249,6 +3355,8 @@ bool os::Linux::libnuma_init() {
     if (handle != NULL) {
       set_numa_node_to_cpus(CAST_TO_FN_PTR(numa_node_to_cpus_func_t,
                                            libnuma_dlsym(handle, "numa_node_to_cpus")));
+      set_numa_node_to_cpus_v2(CAST_TO_FN_PTR(numa_node_to_cpus_v2_func_t,
+                                              libnuma_v2_dlsym(handle, "numa_node_to_cpus")));
       set_numa_max_node(CAST_TO_FN_PTR(numa_max_node_func_t,
                                        libnuma_dlsym(handle, "numa_max_node")));
       set_numa_num_configured_nodes(CAST_TO_FN_PTR(numa_num_configured_nodes_func_t,
@@ -3379,6 +3487,26 @@ void os::Linux::rebuild_cpu_to_node_map() {
   FREE_C_HEAP_ARRAY(unsigned long, cpu_map);
 }
 
+int os::Linux::numa_node_to_cpus(int node, unsigned long *buffer, int bufferlen) {
+  // use the latest version of numa_node_to_cpus if available
+  if (_numa_node_to_cpus_v2 != NULL) {
+
+    // libnuma bitmask struct
+    struct bitmask {
+      unsigned long size; /* number of bits in the map */
+      unsigned long *maskp;
+    };
+
+    struct bitmask mask;
+    mask.maskp = (unsigned long *)buffer;
+    mask.size = bufferlen * 8;
+    return _numa_node_to_cpus_v2(node, &mask);
+  } else if (_numa_node_to_cpus != NULL) {
+    return _numa_node_to_cpus(node, buffer, bufferlen);
+  }
+  return -1;
+}
+
 int os::Linux::get_node_by_cpu(int cpu_id) {
   if (cpu_to_node() != NULL && cpu_id >= 0 && cpu_id < cpu_to_node()->length()) {
     return cpu_to_node()->at(cpu_id);
@@ -3390,6 +3518,7 @@ GrowableArray<int>* os::Linux::_cpu_to_node;
 GrowableArray<int>* os::Linux::_nindex_to_node;
 os::Linux::sched_getcpu_func_t os::Linux::_sched_getcpu;
 os::Linux::numa_node_to_cpus_func_t os::Linux::_numa_node_to_cpus;
+os::Linux::numa_node_to_cpus_v2_func_t os::Linux::_numa_node_to_cpus_v2;
 os::Linux::numa_max_node_func_t os::Linux::_numa_max_node;
 os::Linux::numa_num_configured_nodes_func_t os::Linux::_numa_num_configured_nodes;
 os::Linux::numa_available_func_t os::Linux::_numa_available;
@@ -5254,6 +5383,40 @@ void os::Linux::check_signal_handler(int sig) {
 extern void report_error(char* file_name, int line_no, char* title,
                          char* format, ...);
 
+// Some linux distributions (notably: Alpine Linux) include the
+// grsecurity in the kernel. Of particular interest from a JVM perspective
+// is PaX (https://pax.grsecurity.net/), which adds some security features
+// related to page attributes. Specifically, the MPROTECT PaX functionality
+// (https://pax.grsecurity.net/docs/mprotect.txt) prevents dynamic
+// code generation by disallowing a (previously) writable page to be
+// marked as executable. This is, of course, exactly what HotSpot does
+// for both JIT compiled method, as well as for stubs, adapters, etc.
+//
+// Instead of crashing "lazily" when trying to make a page executable,
+// this code probes for the presence of PaX and reports the failure
+// eagerly.
+static void check_pax(void) {
+  // Zero doesn't generate code dynamically, so no need to perform the PaX check
+#ifndef ZERO
+  size_t size = os::Linux::page_size();
+
+  void* p = ::mmap(NULL, size, PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
+  if (p == MAP_FAILED) {
+    log_debug(os)("os_linux.cpp: check_pax: mmap failed (%s)" , os::strerror(errno));
+    vm_exit_out_of_memory(size, OOM_MMAP_ERROR, "failed to allocate memory for PaX check.");
+  }
+
+  int res = ::mprotect(p, size, PROT_WRITE|PROT_EXEC);
+  if (res == -1) {
+    log_debug(os)("os_linux.cpp: check_pax: mprotect failed (%s)" , os::strerror(errno));
+    vm_exit_during_initialization(
+      "Failed to mark memory page as executable - check if grsecurity/PaX is enabled");
+  }
+
+  ::munmap(p, size);
+#endif
+}
+
 // this is called _before_ most of the global arguments have been parsed
 void os::init(void) {
   char dummy;   // used to get a guess on initial stack address
@@ -5296,6 +5459,8 @@ void os::init(void) {
   // retrieve entry point for pthread_setname_np
   Linux::_pthread_setname_np =
     (int(*)(pthread_t, const char*))dlsym(RTLD_DEFAULT, "pthread_setname_np");
+
+  check_pax();
 
   os::Posix::init();
 }
@@ -5351,7 +5516,7 @@ jint os::init_2(void) {
   Linux::libpthread_init();
   Linux::sched_getcpu_init();
   log_info(os)("HotSpot is running with %s, %s",
-               Linux::glibc_version(), Linux::libpthread_version());
+               Linux::libc_version(), Linux::libpthread_version());
 
   if (UseNUMA) {
     if (!Linux::libnuma_init()) {
@@ -5478,7 +5643,8 @@ static int _cpu_count(const cpu_set_t* cpus) {
 // dynamic check - see 6515172 for details.
 // If anything goes wrong we fallback to returning the number of online
 // processors - which can be greater than the number available to the process.
-int os::Linux::active_processor_count() {
+static int get_active_processor_count() {
+  // Note: keep this function, with its CPU_xx macros, *outside* the os namespace (see JDK-8289477).
   cpu_set_t cpus;  // can represent at most 1024 (CPU_SETSIZE) processors
   cpu_set_t* cpus_p = &cpus;
   int cpus_size = sizeof(cpu_set_t);
@@ -5548,6 +5714,10 @@ int os::Linux::active_processor_count() {
 
   assert(cpu_count > 0 && cpu_count <= os::processor_count(), "sanity check");
   return cpu_count;
+}
+
+int os::Linux::active_processor_count() {
+  return get_active_processor_count();
 }
 
 // Determine the active processor count from one of

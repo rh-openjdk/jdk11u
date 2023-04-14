@@ -252,9 +252,9 @@ void PhaseIdealLoop::clone_skeleton_predicates_to_unswitched_loop(IdealLoopTree*
     assert(predicate->is_Proj() && predicate->as_Proj()->is_IfProj(), "predicate must be a projection of an if node");
     IfProjNode* predicate_proj = predicate->as_IfProj();
 
-    ProjNode* fast_proj = clone_skeleton_predicate_for_unswitched_loops(iff, predicate_proj, uncommon_proj, reason, iffast_pred, loop);
+    ProjNode* fast_proj = clone_skeleton_predicate_for_unswitched_loops(iff, predicate_proj, reason, iffast_pred);
     assert(skeleton_predicate_has_opaque(fast_proj->in(0)->as_If()), "must find skeleton predicate for fast loop");
-    ProjNode* slow_proj = clone_skeleton_predicate_for_unswitched_loops(iff, predicate_proj, uncommon_proj, reason, ifslow_pred, loop);
+    ProjNode* slow_proj = clone_skeleton_predicate_for_unswitched_loops(iff, predicate_proj, reason, ifslow_pred);
     assert(skeleton_predicate_has_opaque(slow_proj->in(0)->as_If()), "must find skeleton predicate for slow loop");
 
     // Update control dependent data nodes.
@@ -280,10 +280,10 @@ void PhaseIdealLoop::clone_skeleton_predicates_to_unswitched_loop(IdealLoopTree*
 // Clone a skeleton predicate for an unswitched loop. OpaqueLoopInit and OpaqueLoopStride nodes are cloned and uncommon
 // traps are kept for the predicate (a Halt node is used later when creating pre/main/post loops and copying this cloned
 // predicate again).
-ProjNode* PhaseIdealLoop::clone_skeleton_predicate_for_unswitched_loops(Node* iff, ProjNode* predicate, Node* uncommon_proj,
-                                                                    Deoptimization::DeoptReason reason, ProjNode* output_proj,
-                                                                    IdealLoopTree* loop) {
-  Node* bol = clone_skeleton_predicate_bool(iff, NULL, NULL, predicate, uncommon_proj, output_proj, loop);
+ProjNode* PhaseIdealLoop::clone_skeleton_predicate_for_unswitched_loops(Node* iff, ProjNode* predicate,
+                                                                        Deoptimization::DeoptReason reason,
+                                                                        ProjNode* output_proj) {
+  Node* bol = clone_skeleton_predicate_bool(iff, NULL, NULL, output_proj);
   ProjNode* proj = create_new_if_for_predicate(output_proj, NULL, reason, iff->Opcode(), predicate->is_IfTrue());
   _igvn.replace_input_of(proj->in(0), 1, bol);
   _igvn.replace_input_of(output_proj->in(0), 0, proj);
@@ -1212,13 +1212,11 @@ bool PhaseIdealLoop::loop_predication_impl_helper(IdealLoopTree *loop, ProjNode*
     upper_bound_iff->set_req(1, upper_bound_bol);
     if (TraceLoopPredicate) tty->print_cr("upper bound check if: %s %d ", negate ? " negated" : "", lower_bound_iff->_idx);
 
-    // Fall through into rest of the clean up code which will move
-    // any dependent nodes onto the upper bound test.
-    new_predicate_proj = upper_bound_proj;
-
-    if (iff->is_RangeCheck()) {
-      new_predicate_proj = insert_initial_skeleton_predicate(iff, loop, proj, predicate_proj, upper_bound_proj, scale, offset, init, limit, stride, rng, overflow, reason);
-    }
+    // Fall through into rest of the cleanup code which will move any dependent nodes to the skeleton predicates of the
+    // upper bound test. We always need to create skeleton predicates in order to properly remove dead loops when later
+    // splitting the predicated loop into (unreachable) sub-loops (i.e. done by unrolling, peeling, pre/main/post etc.).
+    new_predicate_proj = insert_initial_skeleton_predicate(iff, loop, proj, predicate_proj, upper_bound_proj, scale,
+                                                           offset, init, limit, stride, rng, overflow, reason);
 
 #ifndef PRODUCT
     if (TraceLoopOpts && !TraceLoopPredicate) {
