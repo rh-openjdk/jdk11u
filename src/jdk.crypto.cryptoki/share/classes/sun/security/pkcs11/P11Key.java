@@ -37,6 +37,8 @@ import javax.crypto.*;
 import javax.crypto.interfaces.*;
 import javax.crypto.spec.*;
 
+import jdk.internal.misc.SharedSecrets;
+
 import sun.security.rsa.RSAUtil.KeyType;
 import sun.security.rsa.RSAPublicKeyImpl;
 import sun.security.rsa.RSAPrivateCrtKeyImpl;
@@ -68,6 +70,9 @@ import sun.security.jca.JCAUtil;
  * @since   1.5
  */
 abstract class P11Key implements Key, Length {
+
+    private static final boolean plainKeySupportEnabled = SharedSecrets
+            .getJavaSecuritySystemConfiguratorAccess().isPlainKeySupportEnabled();
 
     private static final long serialVersionUID = -2575874101938349339L;
 
@@ -378,7 +383,9 @@ abstract class P11Key implements Key, Length {
             new CK_ATTRIBUTE(CKA_SENSITIVE),
             new CK_ATTRIBUTE(CKA_EXTRACTABLE),
         });
-        if (attributes[1].getBoolean() || (attributes[2].getBoolean() == false)) {
+        boolean exportable = plainKeySupportEnabled && !algorithm.equals("DH");
+        if (!exportable && (attributes[1].getBoolean() ||
+                (attributes[2].getBoolean() == false))) {
             return new P11PrivateKey
                 (session, keyID, algorithm, keyLength, attributes);
         } else {
@@ -460,7 +467,8 @@ abstract class P11Key implements Key, Length {
         }
         public String getFormat() {
             token.ensureValid();
-            if (sensitive || (extractable == false)) {
+            if (!plainKeySupportEnabled &&
+                    (sensitive || (extractable == false))) {
                 return null;
             } else {
                 return "RAW";
