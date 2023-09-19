@@ -183,6 +183,7 @@ module java.base {
         java.sql,
         java.xml,
         jdk.crypto.cryptoki,
+        jdk.crypto.ec,
         jdk.jartool,
         jdk.attach,
         jdk.charsets,
