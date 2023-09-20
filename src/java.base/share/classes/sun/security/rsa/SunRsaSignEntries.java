@@ -27,6 +27,7 @@ package sun.security.rsa;
 
 import java.util.*;
 import java.security.Provider;
+import jdk.internal.misc.SharedSecrets;
 import static sun.security.provider.SunEntries.createAliasesWithOid;
 
 /**
@@ -35,6 +36,10 @@ import static sun.security.provider.SunEntries.createAliasesWithOid;
  * @author  Andreas Sterbenz
  */
 public final class SunRsaSignEntries {
+
+    private static final boolean systemFipsEnabled =
+            SharedSecrets.getJavaSecuritySystemConfiguratorAccess()
+            .isSystemFipsEnabled();
 
     private void add(Provider p, String type, String algo, String cn,
              List<String> aliases, HashMap<String, String> attrs) {
@@ -63,46 +68,53 @@ public final class SunRsaSignEntries {
         add(p, "KeyFactory", "RSA",
                 "sun.security.rsa.RSAKeyFactory$Legacy",
                 rsaAliases, null);
-        add(p, "KeyPairGenerator", "RSA",
-                "sun.security.rsa.RSAKeyPairGenerator$Legacy",
-                rsaAliases, null);
-        add(p, "Signature", "MD2withRSA",
-                "sun.security.rsa.RSASignature$MD2withRSA",
-                createAliasesWithOid(rsaOid + ".2"), attrs);
-        add(p, "Signature", "MD5withRSA",
-                "sun.security.rsa.RSASignature$MD5withRSA",
-                createAliasesWithOid(rsaOid + ".4"), attrs);
-        add(p, "Signature", "SHA1withRSA",
-                "sun.security.rsa.RSASignature$SHA1withRSA",
-                createAliasesWithOid(rsaOid + ".5", sha1withRSAOid2), attrs);
-        add(p, "Signature", "SHA224withRSA",
-                "sun.security.rsa.RSASignature$SHA224withRSA",
-                createAliasesWithOid(rsaOid + ".14"), attrs);
-        add(p, "Signature", "SHA256withRSA",
-                "sun.security.rsa.RSASignature$SHA256withRSA",
-                createAliasesWithOid(rsaOid + ".11"), attrs);
-        add(p, "Signature", "SHA384withRSA",
-                "sun.security.rsa.RSASignature$SHA384withRSA",
-                createAliasesWithOid(rsaOid + ".12"), attrs);
-        add(p, "Signature", "SHA512withRSA",
-                "sun.security.rsa.RSASignature$SHA512withRSA",
-                createAliasesWithOid(rsaOid + ".13"), attrs);
-        add(p, "Signature", "SHA512/224withRSA",
-                "sun.security.rsa.RSASignature$SHA512_224withRSA",
-                createAliasesWithOid(rsaOid + ".15"), attrs);
-        add(p, "Signature", "SHA512/256withRSA",
-                "sun.security.rsa.RSASignature$SHA512_256withRSA",
-                createAliasesWithOid(rsaOid + ".16"), attrs);
+
+        if (!systemFipsEnabled) {
+            add(p, "KeyPairGenerator", "RSA",
+                    "sun.security.rsa.RSAKeyPairGenerator$Legacy",
+                    rsaAliases, null);
+            add(p, "Signature", "MD2withRSA",
+                    "sun.security.rsa.RSASignature$MD2withRSA",
+                    createAliasesWithOid(rsaOid + ".2"), attrs);
+            add(p, "Signature", "MD5withRSA",
+                    "sun.security.rsa.RSASignature$MD5withRSA",
+                    createAliasesWithOid(rsaOid + ".4"), attrs);
+            add(p, "Signature", "SHA1withRSA",
+                    "sun.security.rsa.RSASignature$SHA1withRSA",
+                    createAliasesWithOid(rsaOid + ".5", sha1withRSAOid2), attrs);
+            add(p, "Signature", "SHA224withRSA",
+                    "sun.security.rsa.RSASignature$SHA224withRSA",
+                    createAliasesWithOid(rsaOid + ".14"), attrs);
+            add(p, "Signature", "SHA256withRSA",
+                    "sun.security.rsa.RSASignature$SHA256withRSA",
+                    createAliasesWithOid(rsaOid + ".11"), attrs);
+            add(p, "Signature", "SHA384withRSA",
+                    "sun.security.rsa.RSASignature$SHA384withRSA",
+                    createAliasesWithOid(rsaOid + ".12"), attrs);
+            add(p, "Signature", "SHA512withRSA",
+                    "sun.security.rsa.RSASignature$SHA512withRSA",
+                    createAliasesWithOid(rsaOid + ".13"), attrs);
+            add(p, "Signature", "SHA512/224withRSA",
+                    "sun.security.rsa.RSASignature$SHA512_224withRSA",
+                    createAliasesWithOid(rsaOid + ".15"), attrs);
+            add(p, "Signature", "SHA512/256withRSA",
+                    "sun.security.rsa.RSASignature$SHA512_256withRSA",
+                    createAliasesWithOid(rsaOid + ".16"), attrs);
+        }
 
         add(p, "KeyFactory", "RSASSA-PSS",
                 "sun.security.rsa.RSAKeyFactory$PSS",
                 rsapssAliases, null);
-        add(p, "KeyPairGenerator", "RSASSA-PSS",
-                "sun.security.rsa.RSAKeyPairGenerator$PSS",
-                rsapssAliases, null);
-        add(p, "Signature", "RSASSA-PSS",
-                "sun.security.rsa.RSAPSSSignature",
-                rsapssAliases, attrs);
+
+        if (!systemFipsEnabled) {
+            add(p, "KeyPairGenerator", "RSASSA-PSS",
+                    "sun.security.rsa.RSAKeyPairGenerator$PSS",
+                    rsapssAliases, null);
+            add(p, "Signature", "RSASSA-PSS",
+                    "sun.security.rsa.RSAPSSSignature",
+                    rsapssAliases, attrs);
+        }
+
         add(p, "AlgorithmParameters", "RSASSA-PSS",
                 "sun.security.rsa.PSSParameters",
                 rsapssAliases, null);
