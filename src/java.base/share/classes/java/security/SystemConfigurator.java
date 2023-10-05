@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019, 2021, Red Hat, Inc.
+ * Copyright (c) 2019, 2023, Red Hat, Inc.
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
@@ -77,26 +77,9 @@ final class SystemConfigurator {
      * security.useSystemPropertiesFile is true.
      */
     static boolean configureSysProps(Properties props) {
-        boolean systemSecPropsLoaded = false;
-
-        try (BufferedInputStream bis =
-                new BufferedInputStream(
-                        new FileInputStream(CRYPTO_POLICIES_JAVA_CONFIG))) {
-            props.load(bis);
-            systemSecPropsLoaded = true;
-            if (sdebug != null) {
-                sdebug.println("reading system security properties file " +
-                        CRYPTO_POLICIES_JAVA_CONFIG);
-                sdebug.println(props.toString());
-            }
-        } catch (IOException e) {
-            if (sdebug != null) {
-                sdebug.println("unable to load security properties from " +
-                        CRYPTO_POLICIES_JAVA_CONFIG);
-                e.printStackTrace();
-            }
-        }
-        return systemSecPropsLoaded;
+        // now load the system file, if it exists, so its values
+        // will win if they conflict with the earlier values
+        return Security.loadProps(null, CRYPTO_POLICIES_JAVA_CONFIG, false);
     }
 
     /*
