@@ -33,6 +33,7 @@ import java.net.URL;
 import jdk.internal.event.EventHelper;
 import jdk.internal.event.SecurityPropertyModificationEvent;
 import jdk.internal.misc.JavaSecuritySystemConfiguratorAccess;
+import jdk.internal.misc.JavaSecurityPropertiesAccess;
 import jdk.internal.misc.SharedSecrets;
 import jdk.internal.util.StaticProperty;
 import sun.security.util.Debug;
@@ -72,6 +73,9 @@ public final class Security {
     /* The java.security properties */
     private static Properties props;
 
+    /* cache a copy for recording purposes */
+    private static Properties initialSecurityProperties;
+
     // An element in the cache
     private static class ProviderProperty {
         String className;
@@ -100,6 +104,13 @@ public final class Security {
             public Void run() {
                 initialize();
                 return null;
+            }
+        });
+        // Set up JavaSecurityPropertiesAccess in SharedSecrets
+        SharedSecrets.setJavaSecurityPropertiesAccess(new JavaSecurityPropertiesAccess() {
+            @Override
+            public Properties getInitialProperties() {
+                return initialSecurityProperties;
             }
         });
     }
@@ -182,6 +193,14 @@ public final class Security {
                                "system security properties being enabled.");
             }
         }
+        initialSecurityProperties = (Properties) props.clone();
+        if (sdebug != null) {
+            for (String key : props.stringPropertyNames()) {
+                sdebug.println("Initial security property: " + key + "=" +
+                    props.getProperty(key));
+            }
+        }
+
     }
 
     static boolean loadProps(File masterFile, String extraPropFile, boolean overrideAll) {

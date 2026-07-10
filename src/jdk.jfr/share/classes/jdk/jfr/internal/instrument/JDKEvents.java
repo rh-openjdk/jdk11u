@@ -27,7 +27,9 @@ package jdk.jfr.internal.instrument;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Properties;
 
+import jdk.internal.misc.SharedSecrets;
 import jdk.jfr.Event;
 import jdk.jfr.events.ActiveRecordingEvent;
 import jdk.jfr.events.ActiveSettingEvent;
@@ -38,7 +40,9 @@ import jdk.jfr.events.FileForceEvent;
 import jdk.jfr.events.FileReadEvent;
 import jdk.jfr.events.FileWriteEvent;
 import jdk.jfr.events.DeserializationEvent;
+import jdk.jfr.events.InitialSecurityPropertyEvent;
 import jdk.jfr.events.SecurityPropertyModificationEvent;
+import jdk.jfr.events.SecurityProviderServiceEvent;
 import jdk.jfr.events.SocketReadEvent;
 import jdk.jfr.events.SocketWriteEvent;
 import jdk.jfr.events.TLSHandshakeEvent;
@@ -57,6 +61,7 @@ public final class JDKEvents {
     private static final Class<?>[] mirrorEventClasses = {
         DeserializationEvent.class,
         SecurityPropertyModificationEvent.class,
+        SecurityProviderServiceEvent.class,
         TLSHandshakeEvent.class,
         X509CertificateEvent.class,
         X509ValidationEvent.class
@@ -75,9 +80,11 @@ public final class JDKEvents {
         ActiveRecordingEvent.class,
         jdk.internal.event.DeserializationEvent.class,
         jdk.internal.event.SecurityPropertyModificationEvent.class,
+        jdk.internal.event.SecurityProviderServiceEvent.class,
         jdk.internal.event.TLSHandshakeEvent.class,
         jdk.internal.event.X509CertificateEvent.class,
-        jdk.internal.event.X509ValidationEvent.class
+        jdk.internal.event.X509ValidationEvent.class,
+        InitialSecurityPropertyEvent.class,
     };
 
     // This is a list of the classes with instrumentation code that should be applied.
@@ -94,6 +101,7 @@ public final class JDKEvents {
     private static final Class<?>[] targetClasses = new Class<?>[instrumentationClasses.length];
     private static final JVM jvm = JVM.getJVM();
     private static final Runnable emitExceptionStatistics = JDKEvents::emitExceptionStatistics;
+    private static final Runnable emitInitialSecurityProperties = JDKEvents::emitInitialSecurityProperties;
     private static boolean initializationTriggered;
 
     @SuppressWarnings("unchecked")
@@ -108,6 +116,7 @@ public final class JDKEvents {
                 }
                 initializationTriggered = true;
                 RequestEngine.addTrustedJDKHook(ExceptionStatisticsEvent.class, emitExceptionStatistics);
+                RequestEngine.addTrustedJDKHook(InitialSecurityPropertyEvent.class, emitInitialSecurityProperties);
             }
         } catch (Exception e) {
             Logger.log(LogTag.JFR_SYSTEM, LogLevel.WARN, "Could not initialize JDK events. " + e.getMessage());
@@ -164,5 +173,18 @@ public final class JDKEvents {
 
     public static void remove() {
         RequestEngine.removeHook(JDKEvents::emitExceptionStatistics);
+        RequestEngine.removeHook(JDKEvents::emitInitialSecurityProperties);
+    }
+
+    private static void emitInitialSecurityProperties() {
+        Properties p = SharedSecrets.getJavaSecurityPropertiesAccess().getInitialProperties();
+        if (p != null) {
+            for (String key : p.stringPropertyNames()) {
+                InitialSecurityPropertyEvent e = new InitialSecurityPropertyEvent();
+                e.key = key;
+                e.value = p.getProperty(key);
+                e.commit();
+            }
+        }
     }
 }

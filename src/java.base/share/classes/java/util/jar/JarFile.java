@@ -424,7 +424,8 @@ class JarFile extends ZipFile {
                             jv = new JarVerifier(manEntry.getName(), b);
                         } else {
                             if (JarVerifier.debug != null) {
-                                JarVerifier.debug.println("Multiple MANIFEST.MF found. Treat JAR file as unsigned");
+                                JarVerifier.debug.println(
+                                        JarVerifier.MULTIPLE_MANIFEST_WARNING);
                             }
                         }
                     }
@@ -809,7 +810,9 @@ class JarFile extends ZipFile {
                 throw new IOException("Unsupported size: " + uncompressedSize +
                         " for JarEntry " + ze.getName() +
                         ". Allowed max size: " +
-                        SignatureFileVerifier.MAX_SIG_FILE_SIZE + " bytes");
+                        SignatureFileVerifier.MAX_SIG_FILE_SIZE + " bytes. " +
+                        "You can use the jdk.jar.maxSignatureFileSize " +
+                        "system property to increase the default value.");
             }
             int len = (int)uncompressedSize;
             int bytesRead;
